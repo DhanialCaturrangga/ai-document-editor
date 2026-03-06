@@ -11,11 +11,12 @@ interface Message {
 }
 
 interface Props {
+    documentId: string | null
     documentContent: string
     onDocumentUpdate: (newContent: string) => void
 }
 
-export default function AIChat({ documentContent, onDocumentUpdate }: Props) {
+export default function AIChat({ documentId, documentContent, onDocumentUpdate }: Props) {
     const [messages, setMessages] = useState<Message[]>([])
     const [input, setInput] = useState('')
     const [isLoading, setIsLoading] = useState(false)
@@ -25,6 +26,13 @@ export default function AIChat({ documentContent, onDocumentUpdate }: Props) {
         name: string
     } | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
+
+    // Reset chat when document changes
+    useEffect(() => {
+        setMessages([])
+        setInput('')
+        setSelectedFile(null)
+    }, [documentId])
 
     // Auto-scroll to bottom
     useEffect(() => {

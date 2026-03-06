@@ -1,25 +1,27 @@
+import { Type, type FunctionDeclaration } from '@google/genai'
+
 // Function tool declarations for Gemini AI
 // These define the 5 document manipulation tools the AI can use
 
-export const functionTools = [
+export const functionTools: { function_declaration: FunctionDeclaration }[] = [
     {
         function_declaration: {
             name: 'update_doc_by_line',
             description:
                 'Replace content of specific line(s) in the document. Use this when user asks to change specific lines.',
             parameters: {
-                type: 'object',
+                type: Type.OBJECT,
                 properties: {
                     start_line: {
-                        type: 'integer',
+                        type: Type.INTEGER,
                         description: 'Starting line number (1-indexed)',
                     },
                     end_line: {
-                        type: 'integer',
+                        type: Type.INTEGER,
                         description: 'Ending line number (inclusive)',
                     },
                     new_content: {
-                        type: 'string',
+                        type: Type.STRING,
                         description: 'New content to replace the specified lines',
                     },
                 },
@@ -33,20 +35,19 @@ export const functionTools = [
             description:
                 'Find and replace text in the document. Use when user wants to replace specific words/phrases.',
             parameters: {
-                type: 'object',
+                type: Type.OBJECT,
                 properties: {
                     old_string: {
-                        type: 'string',
+                        type: Type.STRING,
                         description: 'Exact text to find (case-sensitive)',
                     },
                     new_string: {
-                        type: 'string',
+                        type: Type.STRING,
                         description: 'Text to replace with',
                     },
                     occurrence: {
-                        type: 'string',
-                        enum: ['first', 'last', 'all'],
-                        description: 'Which occurrence to replace',
+                        type: Type.STRING,
+                        description: 'Which occurrence to replace (first, last, all)',
                     },
                 },
                 required: ['old_string', 'new_string', 'occurrence'],
@@ -59,19 +60,18 @@ export const functionTools = [
             description:
                 'Insert new content at a specific line without replacing existing content',
             parameters: {
-                type: 'object',
+                type: Type.OBJECT,
                 properties: {
                     line_number: {
-                        type: 'integer',
+                        type: Type.INTEGER,
                         description: 'Line number where to insert',
                     },
                     content: {
-                        type: 'string',
+                        type: Type.STRING,
                         description: 'Content to insert',
                     },
                     position: {
-                        type: 'string',
-                        enum: ['before', 'after'],
+                        type: Type.STRING,
                         description: 'Insert before or after the specified line',
                     },
                 },
@@ -84,14 +84,14 @@ export const functionTools = [
             name: 'delete_lines',
             description: 'Delete specific lines from the document',
             parameters: {
-                type: 'object',
+                type: Type.OBJECT,
                 properties: {
                     start_line: {
-                        type: 'integer',
+                        type: Type.INTEGER,
                         description: 'First line to delete (1-indexed)',
                     },
                     end_line: {
-                        type: 'integer',
+                        type: Type.INTEGER,
                         description: 'Last line to delete (inclusive)',
                     },
                 },
@@ -104,10 +104,10 @@ export const functionTools = [
             name: 'append_to_document',
             description: 'Add content to the end of the document',
             parameters: {
-                type: 'object',
+                type: Type.OBJECT,
                 properties: {
                     content: {
-                        type: 'string',
+                        type: Type.STRING,
                         description: 'Content to append',
                     },
                 },

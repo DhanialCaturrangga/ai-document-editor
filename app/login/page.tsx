@@ -1,16 +1,18 @@
 'use client'
 
 import { supabase } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useState, Suspense } from 'react'
 
-export default function LoginPage() {
+function LoginContent() {
     const [isSignUp, setIsSignUp] = useState(false)
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
     const router = useRouter()
+    const searchParams = useSearchParams()
+    const returnUrl = searchParams.get('returnUrl') || '/ai-editor'
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault()
@@ -22,11 +24,11 @@ export default function LoginPage() {
                 const { error } = await supabase.auth.signUp({ email, password })
                 if (error) throw error
                 // Redirect after signup
-                router.push('/ai-editor')
+                router.push(returnUrl)
             } else {
                 const { error } = await supabase.auth.signInWithPassword({ email, password })
                 if (error) throw error
-                router.push('/ai-editor')
+                router.push(returnUrl)
             }
         } catch (err: any) {
             setError(err.message || 'Authentication failed')
@@ -88,5 +90,13 @@ export default function LoginPage() {
                 </div>
             </div>
         </div>
+    )
+}
+
+export default function LoginPage() {
+    return (
+        <Suspense fallback={<div className="login-container">Loading...</div>}>
+            <LoginContent />
+        </Suspense>
     )
 }

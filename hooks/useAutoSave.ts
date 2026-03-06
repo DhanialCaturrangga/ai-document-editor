@@ -1,11 +1,12 @@
 'use client'
 
 import { supabase } from '@/lib/supabase/client'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export function useAutoSave(documentId: string | null, content: string) {
     const savedContentRef = useRef(content)
     const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+    const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved')
 
     useEffect(() => {
         if (!documentId) return
@@ -17,13 +18,22 @@ export function useAutoSave(documentId: string | null, content: string) {
             clearTimeout(timeoutRef.current)
         }
 
+        setSaveStatus('saving')
         timeoutRef.current = setTimeout(async () => {
-            await supabase
-                .from('documents')
-                .update({ content, updated_at: new Date().toISOString() })
-                .eq('id', documentId)
+            try {
+                const { error } = await supabase
+                    .from('documents')
+                    .update({ content, updated_at: new Date().toISOString() })
+                    .eq('id', documentId)
 
-            savedContentRef.current = content
+                if (error) throw error
+
+                savedContentRef.current = content
+                setSaveStatus('saved')
+            } catch (err) {
+                console.error('Auto-save failed:', err)
+                setSaveStatus('error')
+            }
         }, 2000)
 
         return () => {
@@ -32,4 +42,6 @@ export function useAutoSave(documentId: string | null, content: string) {
             }
         }
     }, [documentId, content])
+
+    return { saveStatus }
 }

@@ -3,7 +3,7 @@
 
 export function executeFunctionCall(
     functionName: string,
-    args: any,
+    args: Record<string, any>,
     currentContent: string
 ): { success: boolean; newContent?: string; error?: string } {
     try {
@@ -107,7 +107,8 @@ export function executeFunctionCall(
             default:
                 return { success: false, error: `Unknown function: ${functionName}` }
         }
-    } catch (error: any) {
-        return { success: false, error: error.message }
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown error'
+        return { success: false, error: message }
     }
 }

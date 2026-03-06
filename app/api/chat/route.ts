@@ -1,6 +1,6 @@
 import { executeFunctionCall } from '@/lib/execute-function'
 import { functionTools } from '@/lib/function-tools'
-import { GoogleGenAI } from '@google/genai'
+import { GoogleGenAI, type Content, type Part } from '@google/genai'
 import { NextRequest, NextResponse } from 'next/server'
 
 const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
@@ -41,7 +41,7 @@ If the user asks to delete lines, use delete_lines.
 Always confirm what you did after making changes. Respond in the same language the user uses.`
 
         // Build the conversation history for Gemini
-        const contents: any[] = [
+        const contents: Content[] = [
             { role: 'user', parts: [{ text: systemPrompt }] },
             { role: 'model', parts: [{ text: 'Understood! I can see the current document and I\'m ready to help you edit it. What would you like me to do?' }] },
         ]
@@ -56,7 +56,7 @@ Always confirm what you did after making changes. Respond in the same language t
 
         // Prepare the last user message with optional file
         const userMessage = messages[messages.length - 1]
-        const contentParts: any[] = []
+        const contentParts: Record<string, unknown>[] = []
 
         // Add file if present (multimodal support)
         if (file) {
@@ -80,18 +80,18 @@ Always confirm what you did after making changes. Respond in the same language t
             model: 'gemini-2.5-flash',
             contents,
             config: {
-                tools: [{ functionDeclarations: functionTools.map(t => t.function_declaration) as any }],
+                tools: [{ functionDeclarations: functionTools.map(t => t.function_declaration) }],
             },
         })
 
         // Check if AI wants to call a function
         const candidate = response.candidates?.[0]
-        const parts = candidate?.content?.parts || []
-        const functionCallPart = parts.find((p: any) => p.functionCall)
+        const parts: Part[] = candidate?.content?.parts || []
+        const functionCallPart = parts.find((p) => p.functionCall)
 
         if (functionCallPart?.functionCall) {
             const name = functionCallPart.functionCall.name!
-            const args = functionCallPart.functionCall.args
+            const args: Record<string, any> = functionCallPart.functionCall.args || {}
 
             // Execute the function
             const executionResult = executeFunctionCall(name, args, documentContent)
@@ -142,7 +142,7 @@ Always confirm what you did after making changes. Respond in the same language t
 
             const responseText =
                 response.candidates?.[0]?.content?.parts
-                    ?.map((p: any) => p.text)
+                    ?.map((p: Part) => p.text)
                     .filter(Boolean)
                     .join('') || '✅ Document updated!'
 
@@ -159,7 +159,7 @@ Always confirm what you did after making changes. Respond in the same language t
         // No function call, just normal chat response
         const responseText =
             parts
-                .map((p: any) => p.text)
+                .map((p: Part) => p.text)
                 .filter(Boolean)
                 .join('') || 'I can help you edit your document. What would you like to change?'
 
@@ -169,10 +169,11 @@ Always confirm what you did after making changes. Respond in the same language t
                 content: responseText,
             },
         })
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('API error:', error)
+        const message = error instanceof Error ? error.message : 'Unknown error'
         return NextResponse.json(
-            { error: 'Failed to process request', details: error.message },
+            { error: 'Failed to process request', details: message },
             { status: 500 }
         )
     }

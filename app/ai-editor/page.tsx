@@ -2,43 +2,52 @@
 
 import AIChat from '@/components/AIChat'
 import { useAuth } from '@/components/AuthProvider'
+import { DocsSidebar } from '@/components/DocsSidebar'
+import { ShareDialog } from '@/components/ShareDialog'
 import DocumentEditor from '@/components/DocumentEditor'
 import { useAutoSave } from '@/hooks/useAutoSave'
 import { useRealtimeDocument } from '@/hooks/useRealtimeDocument'
+import { useBroadcastDocument } from '@/hooks/useBroadcastDocument'
 import { supabase } from '@/lib/supabase/client'
+import type { DocumentSummary } from '@/lib/documents'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 
-interface DocInfo {
-    id: string
-    title: string
-}
-
 export default function EditorPage() {
     const { user, loading: authLoading } = useAuth()
     const router = useRouter()
+    
+    // Editor State
+    const [activeDocument, setActiveDocument] = useState<DocumentSummary | null>(null)
     const [documentContent, setDocumentContent] = useState('')
-    const [currentDoc, setCurrentDoc] = useState<DocInfo | null>(null)
-    const [documents, setDocuments] = useState<any[]>([])
-    const [showDocList, setShowDocList] = useState(true)
     const [darkMode, setDarkMode] = useState(false)
+    const [isShareDialogOpen, setIsShareDialogOpen] = useState(false)
 
     // Undo/Redo state
     const [history, setHistory] = useState<string[]>([''])
     const [historyIndex, setHistoryIndex] = useState(0)
 
     // Auto-save
-    useAutoSave(currentDoc?.id ?? null, documentContent)
+    const { saveStatus } = useAutoSave(activeDocument?.id ?? null, documentContent)
 
-    // Real-time updates
+    // Real-time updates (from DB changes)
     const handleRealtimeUpdate = useCallback(
         (content: string) => {
             setDocumentContent(content)
         },
         []
     )
-    useRealtimeDocument(currentDoc?.id ?? null, handleRealtimeUpdate)
+    useRealtimeDocument(activeDocument?.id ?? null, handleRealtimeUpdate)
+
+    // Broadcast channel (instant sync across tabs)
+    const handleBroadcastReceive = useCallback(
+        (content: string) => {
+            setDocumentContent(content)
+        },
+        []
+    )
+    const { broadcastContent } = useBroadcastDocument(activeDocument?.id ?? null, handleBroadcastReceive)
 
     // Dark mode persistence
     useEffect(() => {
@@ -63,60 +72,43 @@ export default function EditorPage() {
         }
     }, [user, authLoading, router])
 
-    // Load user documents
+    // Load entire document content when selected
     useEffect(() => {
-        if (!user) return
-        loadDocuments()
-    }, [user])
-
-    async function loadDocuments() {
-        const { data } = await supabase
-            .from('documents')
-            .select('*')
-            .order('updated_at', { ascending: false })
-
-        if (data) setDocuments(data)
-    }
-
-    async function createDocument() {
-        if (!user) return
-        const title = prompt('Document title:') || 'Untitled Document'
-        const { data, error } = await supabase
-            .from('documents')
-            .insert({ title, content: '', user_id: user.id })
-            .select()
-            .single()
-
-        if (data && !error) {
-            await loadDocuments()
-            openDocument(data)
-        }
-    }
-
-    async function openDocument(doc: any) {
-        setCurrentDoc({ id: doc.id, title: doc.title })
-        setDocumentContent(doc.content || '')
-        setHistory([doc.content || ''])
-        setHistoryIndex(0)
-        setShowDocList(false)
-    }
-
-    async function deleteDocument(docId: string, e: React.MouseEvent) {
-        e.stopPropagation()
-        if (!confirm('Delete this document?')) return
-        await supabase.from('documents').delete().eq('id', docId)
-        if (currentDoc?.id === docId) {
-            setCurrentDoc(null)
+        if (!activeDocument) {
             setDocumentContent('')
-            setShowDocList(true)
+            setHistory([''])
+            setHistoryIndex(0)
+            return
         }
-        await loadDocuments()
+
+        async function fetchContent() {
+            const { data, error } = await supabase
+                .from('documents')
+                .select('content')
+                .eq('id', activeDocument!.id)
+                .single()
+
+            if (data && !error) {
+                const content = data.content || ''
+                setDocumentContent(content)
+                setHistory([content])
+                setHistoryIndex(0)
+            }
+        }
+        fetchContent()
+    }, [activeDocument?.id]) // Re-run when document ID changes
+
+    function handleDocumentDelete(deletedId: string) {
+        if (activeDocument?.id === deletedId) {
+            setActiveDocument(null)
+        }
     }
 
     // Document change handler with undo history
     const handleDocumentChange = useCallback(
         (newContent: string) => {
             setDocumentContent(newContent)
+            broadcastContent(newContent) // Broadcast ke semua viewer secara instan
             setHistory((prev) => {
                 const newHistory = prev.slice(0, historyIndex + 1)
                 newHistory.push(newContent)
@@ -126,13 +118,14 @@ export default function EditorPage() {
             })
             setHistoryIndex((prev) => Math.min(prev + 1, 49))
         },
-        [historyIndex]
+        [historyIndex, broadcastContent]
     )
 
     // AI document update (also tracked in history)
     const handleAIDocumentUpdate = useCallback(
         (newContent: string) => {
             setDocumentContent(newContent)
+            broadcastContent(newContent) // Broadcast ke semua viewer secara instan
             setHistory((prev) => {
                 const newHistory = [...prev]
                 newHistory.push(newContent)
@@ -141,7 +134,7 @@ export default function EditorPage() {
             })
             setHistoryIndex((prev) => prev + 1)
         },
-        []
+        [broadcastContent]
     )
 
     // Undo/Redo
@@ -167,7 +160,7 @@ export default function EditorPage() {
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = `${currentDoc?.title || 'document'}.md`
+        a.download = `${activeDocument?.title || 'document'}.md`
         a.click()
         URL.revokeObjectURL(url)
     }
@@ -203,145 +196,128 @@ export default function EditorPage() {
 
     if (!user) return null
 
-    // Document list view
-    if (showDocList) {
-        return (
-            <div className="docs-container" data-theme={darkMode ? 'dark' : undefined}>
-                <div className="docs-header">
-                    <h1>
-                        <span>📝</span> My Documents
-                    </h1>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                        <button className="btn btn-icon" onClick={toggleDarkMode} title="Toggle dark mode">
-                            {darkMode ? '☀️' : '🌙'}
-                        </button>
-                        <button className="btn btn-primary" onClick={createDocument}>
-                            + New Document
-                        </button>
-                    </div>
-                </div>
+    return (
+        <div className="layout-wrapper">
+            {/* Sidebar */}
+            <DocsSidebar
+                userId={user.id}
+                activeDocumentId={activeDocument?.id ?? null}
+                onDocumentSelect={setActiveDocument}
+                onDocumentDelete={handleDocumentDelete}
+            />
 
-                <div className="docs-grid">
-                    <div className="doc-card doc-card-new" onClick={createDocument}>
-                        <div className="plus-icon">+</div>
-                        <span>New Document</span>
-                    </div>
-                    {documents.map((doc) => (
-                        <div key={doc.id} className="doc-card" onClick={() => openDocument(doc)}>
-                            <h3>{doc.title}</h3>
-                            <div className="doc-preview">
-                                {doc.content || 'Empty document'}
+            {/* Main Content Area */}
+            <div className="layout-main">
+                {activeDocument ? (
+                    <div className="app-container" key={activeDocument.id}>
+                        {/* Toolbar */}
+                        <div className="toolbar border-b border-[var(--border)]">
+                            <div className="toolbar-left">
+                                <div className="toolbar-title ml-4">
+                                    <div className="logo text-[var(--brand-primary)]">✦</div>
+                                    <span className="font-medium text-[var(--text-primary)]">
+                                        {activeDocument.title}
+                                    </span>
+                                </div>
+                                <div className="save-status ml-4 flex items-center gap-2">
+                                    {saveStatus === 'saving' && <span className="text-gray-400 text-xs">Menyimpan...</span>}
+                                    {saveStatus === 'saved' && (
+                                        <>
+                                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--success)' }}></div>
+                                            <span className="text-green-500 text-xs">Tersimpan</span>
+                                        </>
+                                    )}
+                                    {saveStatus === 'error' && <span className="text-red-500 text-xs">⚠ Gagal menyimpan</span>}
+                                </div>
                             </div>
-                            <div className="doc-meta" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span>{new Date(doc.updated_at).toLocaleDateString()}</span>
+
+                            <div className="toolbar-right pr-4">
                                 <button
-                                    className="btn-icon"
-                                    style={{ width: 24, height: 24, fontSize: 12, color: 'var(--text-danger)' }}
-                                    onClick={(e) => deleteDocument(doc.id, e)}
-                                    title="Delete"
+                                    onClick={() => setIsShareDialogOpen(true)}
+                                    className="btn btn-primary"
+                                    style={{ padding: '4px 10px', fontSize: 13, marginRight: 8 }}
                                 >
-                                    🗑️
+                                    🔗 Bagikan
                                 </button>
+                                <button
+                                    className="btn-icon text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                                    onClick={undo}
+                                    disabled={historyIndex <= 0}
+                                    title="Undo (Ctrl+Z)"
+                                >
+                                    ↩
+                                </button>
+                                <button
+                                    className="btn-icon text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                                    onClick={redo}
+                                    disabled={historyIndex >= history.length - 1}
+                                    title="Redo (Ctrl+Y)"
+                                >
+                                    ↪
+                                </button>
+                                <button
+                                    className="btn-icon text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                                    onClick={downloadDocument}
+                                    title="Download"
+                                >
+                                    ⬇
+                                </button>
+                                <button
+                                    className="btn-icon text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                                    onClick={toggleDarkMode}
+                                    title="Toggle dark mode"
+                                >
+                                    {darkMode ? '☀️' : '🌙'}
+                                </button>
+                                <div className="user-badge flex items-center gap-2 ml-4 px-3 py-1 bg-[var(--surface-raised)] rounded-full border border-[var(--border)]">
+                                    <span className="text-sm font-medium text-[var(--text-primary)]">
+                                        {user.email?.split('@')[0]}
+                                    </span>
+                                    <button
+                                        onClick={async () => { await supabase.auth.signOut(); router.push('/login') }}
+                                        className="text-xs text-[var(--text-danger)] hover:underline bg-transparent border-none cursor-pointer p-0"
+                                    >
+                                        Keluar
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                    ))}
-                </div>
 
-                <div style={{ textAlign: 'center', marginTop: 32 }}>
-                    <div className="user-badge" style={{ display: 'inline-flex' }}>
-                        <span>👤</span>
-                        <span>{user.email}</span>
-                        <button
-                            onClick={async () => { await supabase.auth.signOut(); router.push('/login') }}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', marginLeft: 8, color: 'var(--text-danger)', fontSize: 12 }}
-                        >
-                            Sign Out
-                        </button>
+                        {/* Editor Panels */}
+                        <div className="flex-1 overflow-hidden">
+                            <PanelGroup direction="horizontal">
+                                <Panel defaultSize={50} minSize={30} className="panel-editor h-full">
+                                    <DocumentEditor
+                                        content={documentContent}
+                                        onChange={handleDocumentChange}
+                                    />
+                                </Panel>
+
+                                <PanelResizeHandle className="w-1 bg-[var(--border)] hover:bg-[var(--brand-primary)] transition-colors cursor-col-resize" />
+
+                                <Panel defaultSize={50} minSize={30} className="panel-chat border-l border-[var(--border)] h-full">
+                                    <AIChat
+                                        documentId={activeDocument?.id ?? null}
+                                        documentContent={documentContent}
+                                        onDocumentUpdate={handleAIDocumentUpdate}
+                                    />
+                                </Panel>
+                            </PanelGroup>
+                        </div>
+                        {isShareDialogOpen && (
+                            <ShareDialog
+                                documentId={activeDocument.id}
+                                ownerId={user.id}
+                                onClose={() => setIsShareDialogOpen(false)}
+                            />
+                        )}
                     </div>
-                </div>
-            </div>
-        )
-    }
-
-    // Editor view
-    return (
-        <div className="app-container">
-            {/* Toolbar */}
-            <div className="toolbar">
-                <div className="toolbar-left">
-                    <button
-                        className="btn-icon"
-                        onClick={() => setShowDocList(true)}
-                        title="Back to documents"
-                    >
-                        ←
-                    </button>
-                    <div className="toolbar-title">
-                        <div className="logo">✦</div>
-                        <span>{currentDoc?.title || 'Untitled'}</span>
+                ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-[var(--text-tertiary)] bg-[var(--surface-sunken)]">
+                        <div className="text-4xl mb-4">📄</div>
+                        <p className="text-lg">Pilih dokumen dari sidebar atau buat dokumen baru</p>
                     </div>
-                    <div className="save-status">
-                        <div className="dot"></div>
-                        <span>Auto-saved</span>
-                    </div>
-                </div>
-
-                <div className="toolbar-right">
-                    <button
-                        className="btn-icon"
-                        onClick={undo}
-                        disabled={historyIndex <= 0}
-                        title="Undo (Ctrl+Z)"
-                    >
-                        ↩
-                    </button>
-                    <button
-                        className="btn-icon"
-                        onClick={redo}
-                        disabled={historyIndex >= history.length - 1}
-                        title="Redo (Ctrl+Y)"
-                    >
-                        ↪
-                    </button>
-                    <button
-                        className="btn-icon"
-                        onClick={downloadDocument}
-                        title="Download"
-                    >
-                        ⬇
-                    </button>
-                    <button
-                        className="btn-icon"
-                        onClick={toggleDarkMode}
-                        title="Toggle dark mode"
-                    >
-                        {darkMode ? '☀️' : '🌙'}
-                    </button>
-                    <div className="user-badge">
-                        <span>{user.email?.split('@')[0]}</span>
-                    </div>
-                </div>
-            </div>
-
-            {/* Panels */}
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-                <PanelGroup direction="horizontal">
-                    <Panel defaultSize={50} minSize={30} className="panel-editor">
-                        <DocumentEditor
-                            content={documentContent}
-                            onChange={handleDocumentChange}
-                        />
-                    </Panel>
-
-                    <PanelResizeHandle className="resize-handle" />
-
-                    <Panel defaultSize={50} minSize={30} className="panel-chat">
-                        <AIChat
-                            documentContent={documentContent}
-                            onDocumentUpdate={handleAIDocumentUpdate}
-                        />
-                    </Panel>
-                </PanelGroup>
+                )}
             </div>
         </div>
     )
